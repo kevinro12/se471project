@@ -17,6 +17,9 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
@@ -25,6 +28,7 @@ import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
 import javax.swing.SwingUtilities;
 import javax.swing.border.EmptyBorder;
 
@@ -65,6 +69,8 @@ public class CalanderCanvasApplication {
 
     // Maximum width in pixels for the assignment name text area, to wrap long names
     private static final int MAX_NAME_WIDTH_PX = 100;
+
+    private static ScheduledExecutorService scheduler;
 
     public static void main(String[] args) {
         System.out.println("Headless mode: " + GraphicsEnvironment.isHeadless());
@@ -126,6 +132,9 @@ public class CalanderCanvasApplication {
         SwingUtilities.invokeLater(() -> {
             createMainPanel();
         });
+
+        // Start the auto-refresh scheduler
+        startAutoRefresh();
     }
 
     /**
@@ -139,6 +148,12 @@ public class CalanderCanvasApplication {
     private static void createMainPanel() {
         frame = new JFrame("Canvas Calendar");
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowClosing(java.awt.event.WindowEvent windowEvent) {
+                stopAutoRefresh();
+            }
+        });
         frame.setLayout(new BorderLayout());
 
         // Header panel with a title
@@ -161,7 +176,13 @@ public class CalanderCanvasApplication {
         assignmentsListPanel = new JPanel();
         assignmentsListPanel.setLayout(new BoxLayout(assignmentsListPanel, BoxLayout.Y_AXIS));
         assignmentsListPanel.setBackground(Color.WHITE);
-        assignmentsPanel.add(assignmentsListPanel, BorderLayout.CENTER);
+
+        // Wrap the assignments list panel in a scroll pane
+        JScrollPane scrollPane = new JScrollPane(assignmentsListPanel);
+        scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
+        scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        scrollPane.setPreferredSize(new java.awt.Dimension(300, 400)); // Set fixed size for the scrollable area
+        assignmentsPanel.add(scrollPane, BorderLayout.CENTER);
 
         frame.add(assignmentsPanel, BorderLayout.EAST);
 
@@ -181,6 +202,13 @@ public class CalanderCanvasApplication {
         JPanel leftPanel = new JPanel(new BorderLayout());
         leftPanel.add(navigationPanel, BorderLayout.NORTH);
         leftPanel.add(calendarPanel, BorderLayout.CENTER);
+
+        // Add a "Due Soon Assignments" panel below the calendar
+        JPanel dueSoonPanel = new JPanel();
+        dueSoonPanel.setLayout(new BoxLayout(dueSoonPanel, BoxLayout.Y_AXIS));
+        dueSoonPanel.setBorder(BorderFactory.createTitledBorder("Assignments Due soon"));
+        leftPanel.add(dueSoonPanel, BorderLayout.SOUTH);
+
         frame.add(leftPanel, BorderLayout.CENTER);
 
         // Control panel at the bottom with a "Refresh Assignments" button and "Clear Selection" button
@@ -214,7 +242,9 @@ public class CalanderCanvasApplication {
             updateCalendar(ym);
         });
 
+        // Register observers
         registerObserver(new ConcreteAssignmentObserver(), observableAssignments);
+        registerObserver(new DueSoonAssignmentsObserver(dueSoonPanel), observableAssignments);
 
         // Final frame setup
         frame.setSize(1000, 600);
@@ -238,13 +268,17 @@ public interface AssignmentObserver {
 }
 
 
-public static class ConcreteAssignmentObserver implements CalanderCanvasApplication.AssignmentObserver {
+public static class ConcreteAssignmentObserver implements AssignmentObserver {
     @Override
     public void onAssignmentsChanged(Map<LocalDate, List<String>> updatedAssignments) {
-       
+        // Update the assignments map
         CalanderCanvasApplication.assignments = updatedAssignments;
 
-        CalanderCanvasApplication.updateCalendar(CalanderCanvasApplication.getCurrentDisplayedYearMonth());
+        // Update the calendar and assignments panel
+        SwingUtilities.invokeLater(() -> {
+            CalanderCanvasApplication.updateCalendar(CalanderCanvasApplication.getCurrentDisplayedYearMonth());
+            CalanderCanvasApplication.showMonthlyAssignments();
+        });
     }
 }
 
@@ -277,10 +311,68 @@ public static class ObservableAssignments {
     }
 }
 
+public static class DueSoonAssignmentsObserver implements AssignmentObserver {
+    private JPanel dueSoonPanel;
 
+    public DueSoonAssignmentsObserver(JPanel dueSoonPanel) {
+        this.dueSoonPanel = dueSoonPanel;
+    }
 
+    @Override
+    public void onAssignmentsChanged(Map<LocalDate, List<String>> updatedAssignments) {
+        SwingUtilities.invokeLater(() -> {
+            updateDueSoonPanel(updatedAssignments);
+        });
+    }
 
+    private void updateDueSoonPanel(Map<LocalDate, List<String>> updatedAssignments) {
+        dueSoonPanel.removeAll();
+        dueSoonPanel.setBackground(new Color(245, 245, 245)); // Light gray background
 
+        LocalDate today = LocalDate.now();
+        LocalDate twoDaysFromNow = today.plusDays(2);
+
+        boolean hasDueSoonAssignments = false;
+
+        for (Map.Entry<LocalDate, List<String>> entry : updatedAssignments.entrySet()) {
+            LocalDate date = entry.getKey();
+
+            // Check if the assignment is due within the next 2 days
+            if (!date.isBefore(today) && !date.isAfter(twoDaysFromNow)) {
+                hasDueSoonAssignments = true;
+
+                JLabel dateLabel = new JLabel("Due on: " + date.toString());
+                dateLabel.setFont(new Font("Arial", Font.BOLD, 14));
+                dateLabel.setBorder(new EmptyBorder(10, 10, 10, 10));
+                dateLabel.setForeground(new Color(0, 102, 204)); // Blue text
+                dueSoonPanel.add(dateLabel);
+
+                for (String record : entry.getValue()) {
+                    String[] parts = record.split("\\|");
+                    String assignmentName = parts[0];
+                    String totalPoints = parts.length > 2 ? parts[2] : "N/A";
+
+                    JLabel assignmentLabel = new JLabel(" - " + assignmentName + " (Total Points: " + totalPoints + ")");
+                    assignmentLabel.setFont(new Font("Arial", Font.PLAIN, 12));
+                    assignmentLabel.setBorder(new EmptyBorder(5, 20, 5, 10));
+                    assignmentLabel.setForeground(new Color(51, 51, 51)); // Dark gray text
+                    dueSoonPanel.add(assignmentLabel);
+                }
+            }
+        }
+
+        if (!hasDueSoonAssignments) {
+            JLabel noDueSoonLabel = new JLabel("No assignments due soon.");
+            noDueSoonLabel.setFont(new Font("Arial", Font.ITALIC, 14));
+            noDueSoonLabel.setBorder(new EmptyBorder(10, 10, 10, 10));
+            noDueSoonLabel.setForeground(new Color(128, 128, 128)); // Gray text
+            dueSoonPanel.add(noDueSoonLabel);
+        }
+
+        dueSoonPanel.revalidate();
+        dueSoonPanel.repaint();
+    }
+}
 
     /**
      * handleRefresh():
@@ -764,6 +856,79 @@ public static class ObservableAssignments {
             return true;
         } catch (NumberFormatException e) {
             return false;
+        }
+    }
+
+    private static void startAutoRefresh() {
+        scheduler = Executors.newSingleThreadScheduledExecutor();
+
+        // Schedule the task to run every 30 seconds
+        scheduler.scheduleAtFixedRate(() -> {
+            try {
+                System.out.println("Auto-refreshing assignments...");
+                List<String> assignmentsData = fetchAssignmentsFromBackend();
+
+                // Create a new map to store the updated assignments
+                Map<LocalDate, List<String>> updatedAssignments = new HashMap<>();
+
+                // Parse each assignment string returned from the backend
+                for (String entry : assignmentsData) {
+                    String assignmentName = null;
+                    String dueDateStr = null;
+                    String totalPoints = null;
+                    String pointsEarned = null;
+
+                    // Each assignment line is CSV-like: "Assignment: NAME, Due Date: DATE, Total Points: TP, Points Earned: PE"
+                    String[] parts = entry.split(",");
+                    for (String part : parts) {
+                        String trimmed = part.trim();
+                        if (trimmed.startsWith("Assignment:")) {
+                            assignmentName = trimmed.replace("Assignment:", "").trim();
+                        } else if (trimmed.startsWith("Due Date:")) {
+                            dueDateStr = trimmed.replace("Due Date:", "").trim();
+                        } else if (trimmed.startsWith("Total Points:")) {
+                            totalPoints = trimmed.replace("Total Points:", "").trim();
+                        } else if (trimmed.startsWith("Points Earned:")) {
+                            pointsEarned = trimmed.replace("Points Earned:", "").trim();
+                        }
+                    }
+
+                    // Only add to the map if we have a valid assignment name and due date
+                    if (assignmentName != null && dueDateStr != null && !dueDateStr.equals("No Due Date")) {
+                        try {
+                            // Parse the due date, convert to system's timezone, and get the LocalDate
+                            ZonedDateTime zdt = ZonedDateTime.parse(dueDateStr)
+                                    .withZoneSameInstant(java.time.ZoneId.systemDefault());
+                            LocalDate date = zdt.toLocalDate();
+
+                            // Store record as "AssignmentName|ZonedDateTime|TotalPoints|PointsEarned"
+                            String record = assignmentName + "|" + zdt.toString() + "|" +
+                                            (totalPoints != null ? totalPoints : "N/A") + "|" +
+                                            (pointsEarned != null ? pointsEarned : "");
+
+                            // Avoid duplicates: Check if the record already exists for the date
+                            List<String> existingAssignments = updatedAssignments.computeIfAbsent(date, k -> new ArrayList<>());
+                            if (!existingAssignments.contains(record)) {
+                                existingAssignments.add(record);
+                            }
+                        } catch (DateTimeParseException ex) {
+                            System.err.println("Failed to parse date: " + dueDateStr);
+                        }
+                    }
+                }
+
+                // Update the observable assignments with the new data
+                observableAssignments.setAssignments(updatedAssignments);
+
+            } catch (Exception e) {
+                System.err.println("Error during auto-refresh: " + e.getMessage());
+            }
+        }, 0, 30, TimeUnit.SECONDS); // Initial delay: 0 seconds, Period: 30 seconds
+    }
+
+    private static void stopAutoRefresh() {
+        if (scheduler != null && !scheduler.isShutdown()) {
+            scheduler.shutdown();
         }
     }
 }
