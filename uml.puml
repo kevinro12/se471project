@@ -1,0 +1,53 @@
+@startuml
+
+interface AssignmentObserver {
+    +onAssignmentsChanged(updatedAssignments: Map<LocalDate, List<String>>): void
+}
+
+class ObservableAssignments {
+    -assignments: Map<LocalDate, List<String>>
+    -observers: List<AssignmentObserver>
+    +addObserver(observer: AssignmentObserver): void
+    +removeObserver(observer: AssignmentObserver): void
+    +setAssignments(newAssignments: Map<LocalDate, List<String>>): void
+    +getAssignments(): Map<LocalDate, List<String>>
+    -notifyObservers(): void
+}
+
+class ConcreteAssignmentObserver implements AssignmentObserver {
+    +onAssignmentsChanged(updatedAssignments: Map<LocalDate, List<String>>): void
+}
+
+class CalanderCanvasApplication {
+    -frame: JFrame
+    -calendarPanel: JPanel
+    -assignmentsListPanel: JPanel
+    -assignmentsLabel: JLabel
+    -monthYearLabel: JLabel
+    -prevButton: JButton
+    -nextButton: JButton
+    -observableAssignments: ObservableAssignments
+    -assignments: Map<LocalDate, List<String>>
+    +main(args: String[]): void
+    -createMainPanel(): void
+    -handleRefresh(): void
+    -fetchAssignmentsFromBackend(): List<String>
+    -updateCalendar(ym: YearMonth): void
+    -showAssignmentsForDate(date: LocalDate): void
+    -computeMonthlyTotals(ym: YearMonth): double[]
+    -getCurrentDisplayedYearMonth(): YearMonth
+}
+
+class GraphPanel extends JPanel {
+    -totalPoints: double
+    -earnedPoints: double
+    -labelPrefix: String
+    +paintComponent(g: Graphics): void
+}
+
+ObservableAssignments o-- "0..*" AssignmentObserver
+CalanderCanvasApplication --> ObservableAssignments
+ConcreteAssignmentObserver ..|> AssignmentObserver
+CalanderCanvasApplication --> GraphPanel
+
+@enduml

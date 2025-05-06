@@ -1,0 +1,1 @@
+When adding custom calls please type the main code into CanvasAPIService.java, follow the format of the one that already exists to make it easier. Then make the actual call in CanvasController.java. The @GetMapping is used so you can view the data parsed when you locally host this. Also the Spring Boot extensions to help. 
